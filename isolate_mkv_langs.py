@@ -123,6 +123,6 @@ for root, dirs, files in os.walk(DIR):
         # overwrite file
         if KEEP:
             os.rename(path, path + ".original")
-	    else:
+	else:
             os.remove(path)
         os.rename(path + ".temp", path)
