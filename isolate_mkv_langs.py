@@ -1,29 +1,42 @@
 import getopt
 import json
 import os
-import re
 import sys
 import StringIO
 import subprocess
 
 # set up default values
-LANG = "eng"
-MKVMERGE = "/usr/bin/mkvmerge"
 DIR = "."
+KEEP = False
+LANGS = "eng"
+MKVMERGE = "/usr/bin/mkvmerge"
 
 # grab the options passed in
 try:
-    opts, args = getopt.getopt(sys.argv[1:],"d:l:m:",["dir=","lang=","mkvmerge="])
+    opts, args = getopt.getopt(sys.argv[1:],"d:hkl:m:",["dir=","help","keep","langs=","mkvmerge="])
 except getopt.GetoptError:
-    print "filter_mkv_lang.py -d <target dir> -l <3-letter lang> -m <path to mkvmerge>"
+    print "isolate_mkv_langs.py -d <target dir> -l <3-char_lang_code> -m <path to mkvmerge>"
     sys.exit(2)
 
 # parse them & overwrride defaults
 for opt, arg in opts:
     if opt in ("-d", "--dir"):
         DIR = arg
+    elif opt in ("-h", "--help"):
+        print """isolate_mkv_langs.py -d </path/to/mkvs> -l <3-char_lang_code> -m </path/to/mkvmerge>
+                  
+ Options:
+  -d, --dir <folder>            The directory where your MKVs are stored
+  -h, --help                    Display help text
+  -k, --keep        	        Keep original file
+  -l, --langs <languages>       3-character language code (e.g. eng). To retain multiple, separate languages with a comma (e.g. eng,spa)
+  -m, --mkvmerge <executable>   The path to the MKVMerge executable"""
+        sys.exit()
+    elif opt in ("-k", "--keep"):
+        KEEP = True
     elif opt in ("-l", "--lang"):
-        LANG = arg
+        # make sure there are no spaces in the string
+        LANGS = arg.replace(" ", "")
     elif opt in ("-m", "--mkvmerge"):
         MKVMERGE = arg
 
@@ -33,9 +46,10 @@ if not os.path.isdir(DIR):
     print "invalid target directory"
     sys.exit(2)
 
-# language must be 3 characters
-if len(LANG) != 3:
-    print "language should be the 3 character code"
+# language must be at least 3 characters
+# no validation on langs--if you're using this, you should know what lang to use
+if len(LANGS) < 3:
+    print "language should be the 3 character code (or several comma separated 3 character codes)"
     sys.exit(2)
 
 # mkvmerge should be executable
@@ -67,24 +81,24 @@ for root, dirs, files in os.walk(DIR):
 
         # load the response & grab the track info
         info = json.load(StringIO.StringIO(stdout))
-        tracks = {"audio": {LANG: 0, "non": 0}, "subtitles": {LANG: 0, "non": 0}}
+        tracks = {"audio": {LANGS: 0, "non": 0}, "subtitles": {LANGS: 0, "non": 0}}
         # check out each track
         for track in info["tracks"]:
             # if we care about it (ignore video, etc.), bump the count of the lang
             # if it's not the lang we're filtering to, bucket it into "non"
             if track["type"] in ("audio", "subtitles"):
-                key = LANG if track["properties"]["language"] == LANG else "non"
+                key = LANGS if track["properties"]["language"] in LANGS else "non"
                 tracks[track["type"]][key] += 1
 
         # yes, these could all be a single block, but I wanted distinct messaging
         # we can't filter to the specified language since there are no tracks for it
-        if tracks["audio"][LANG] == 0 and tracks["subtitles"][LANG] == 0:
-            print >> sys.stderr, " - nothing to do (no tracks found for " + LANG + ")\n"
+        if tracks["audio"][LANGS] == 0 and tracks["subtitles"][LANGS] == 0:
+            print >> sys.stderr, " - nothing to do (no tracks found for " + LANGS + ")\n"
             continue
 
         # we don't need to process this as it's already just the language we want
         if tracks["audio"]["non"] == 0 and tracks["subtitles"]["non"] == 0:
-            print >> sys.stderr, " - nothing to do (no non-" + LANG + " tracks found)\n"
+            print >> sys.stderr, " - nothing to do (no non-" + LANGS + " tracks found)\n"
             continue
 
         # we don't need to process this since there's only a single track of each
@@ -94,7 +108,7 @@ for root, dirs, files in os.walk(DIR):
             continue
 
         # build command line to process the file
-        cmd = [MKVMERGE, "-a", LANG, "-s", LANG, "-o", path + ".temp", path]
+        cmd = [MKVMERGE, "-a", LANGS, "-s", LANGS, "-o", path + ".temp", path]
 
         # process file
         print >> sys.stderr, " - Processing", path, "...\n",
@@ -106,6 +120,9 @@ for root, dirs, files in os.walk(DIR):
 
         print >> sys.stderr, "  -- Succeeded\n"
 
-        # remove file with extra tracks, move new file into it's place
-        os.remove(path)
+        # overwrite file
+        if KEEP:
+            os.rename(path, path + ".original")
+	    else:
+            os.remove(path)
         os.rename(path + ".temp", path)
